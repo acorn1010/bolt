@@ -76,25 +76,7 @@ gulp.task('tslint', function() {
     .pipe(tslint.report('prose'));
 });
 
-gulp.task('lint', ['eslint', 'tslint']);
-
-gulp.task('ts-compile', ['build-peg'], function() {
-  var tsProject = ts.createProject('tsconfig.json', {
-    // Use the repo-installed version of typescript instead of
-    // the version built into gulp-typescript.
-    typescript: require('typescript')
-  });
-  var tsResult = tsProject.src()
-      .pipe(sourcemaps.init())
-      .pipe(ts(tsProject));
-
-  return merge([
-    tsResult.pipe(sourcemaps.write()).pipe(gulp.dest(LIB_DIR)),
-    tsResult.dts.pipe(gulp.dest(LIB_DIR)),
-  ]);
-});
-
-gulp.task('build', ['ts-compile', 'browserify-bolt']);
+gulp.task('lint', gulp.series('eslint', 'tslint'));
 
 gulp.task('build-peg', function() {
   return gulp.src('src/rules-parser.pegjs')
@@ -102,7 +84,39 @@ gulp.task('build-peg', function() {
     .pipe(gulp.dest(LIB_DIR));
 });
 
-gulp.task('build-browser-tests', ['browserify-tests'], function() {
+gulp.task('ts-compile-function', function() {
+  var tsProject = ts.createProject('tsconfig.json', {
+    // Use the repo-installed version of typescript instead of
+    // the version built into gulp-typescript.
+    typescript: require('typescript')
+  });
+  var tsResult = tsProject.src()
+    .pipe(sourcemaps.init())
+    .pipe(ts(tsProject));
+
+  return merge([
+    tsResult.pipe(sourcemaps.write()).pipe(gulp.dest(LIB_DIR)),
+    tsResult.dts.pipe(gulp.dest(LIB_DIR)),
+  ]);
+});
+
+gulp.task('ts-compile', gulp.series('build-peg', 'ts-compile-function'));
+
+gulp.task('browserify-bolt-function', function() {
+  return browserifyToDist(path.join(LIB_DIR, 'bolt.js'));
+});
+
+gulp.task('browserify-bolt', gulp.series('ts-compile', 'browserify-bolt-function'));
+
+gulp.task('build', gulp.series('ts-compile', 'browserify-bolt'));
+
+gulp.task('browserify-tests-function', function() {
+  return merge(BROWSER_TESTS.map(testFileSource).map(browserifyToDist));
+});
+
+gulp.task('browserify-tests', gulp.series('build', 'browserify-tests-function'));
+
+gulp.task('build-browser-tests-function', function() {
   return merge(TEST_SETS.map(function(set) {
     // Mark the current set as selected for CSS class in test template
     var sets = TEST_SETS.map(function(otherSet) {
@@ -118,17 +132,10 @@ gulp.task('build-browser-tests', ['browserify-tests'], function() {
       .pipe(gulp.dest(DIST_DIR));
   }));
 });
-
-gulp.task('browserify-tests', ['build'], function() {
-  return merge(BROWSER_TESTS.map(testFileSource).map(browserifyToDist));
-});
-
-gulp.task('browserify-bolt', ['ts-compile'], function() {
-  return browserifyToDist(path.join(LIB_DIR, 'bolt.js'));
-});
+gulp.task('build-browser-tests', gulp.series('browserify-tests', 'build-browser-tests-function'));
 
 // Runs the Mocha test suite
-gulp.task('test', ['lint', 'build'], function() {
+gulp.task('test-function', function() {
   mkdirp(TMP_DIR);
   var mochaOptions = {
     ui: 'tdd',
@@ -140,8 +147,9 @@ gulp.task('test', ['lint', 'build'], function() {
   return gulp.src(CI_TESTS.map(testFileSource))
     .pipe(mocha(mochaOptions));
 });
+gulp.task('test', gulp.series('lint', 'build', 'test-function'));
 
-gulp.task('default', ['test']);
+gulp.task('default', gulp.series('test'));
 
 // Don't depend on 'build' in case current state is failing to compile - need to edit file
 // to kick off first watch build.
